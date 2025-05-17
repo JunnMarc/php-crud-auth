@@ -1,45 +1,51 @@
 <?php
-require_once 'config/database.php';
-require_once 'handlers/auth_handler.php';
-require_once 'handlers/todo_handler.php';
+define('BASE_PATH', __DIR__);
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/handlers/auth_handler.php';
+require_once BASE_PATH . '/handlers/todo_handler.php';
 
 $auth = new AuthHandler($pdo);
 $todo = new TodoHandler($pdo);
 
-// Handle login/register/logout
+// Check if user is logged in
+if (!$auth->isLoggedIn()) {
+    header('Location: login.php');
+    exit;
+}
+
+// Handle todo operations
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['login'])) {
-        if ($auth->login($_POST['username'], $_POST['password'])) {
-            header('Location: index.php');
-            exit;
-        } else {
-            $error = "Invalid credentials";
-        }
-    } elseif (isset($_POST['register'])) {
-        if ($auth->register($_POST['username'], $_POST['password'])) {
-            $success = "Registration successful! Please login.";
-        } else {
-            $error = "Registration failed";
-        }
-    } elseif (isset($_POST['logout'])) {
+    if (isset($_POST['logout'])) {
         $auth->logout();
-        header('Location: index.php');
+        header('Location: login.php');
         exit;
-    } elseif (isset($_POST['add_todo']) && $auth->isLoggedIn()) {
+    } elseif (isset($_POST['add_todo'])) {
         if ($todo->createTodo($_SESSION['user_id'], $_POST['title'], $_POST['description'])) {
             $success = "Todo added successfully!";
         } else {
-            $error = "Failed to add todo";
+            $error = "Failed to add todo: " . $todo->getLastError();
         }
-    } elseif (isset($_POST['update_status']) && $auth->isLoggedIn()) {
+    } elseif (isset($_POST['update_todo'])) {
+        if ($todo->updateTodo($_POST['todo_id'], $_SESSION['user_id'], $_POST['title'], $_POST['description'])) {
+            $success = "Todo updated successfully!";
+        } else {
+            $error = "Failed to update todo";
+        }
+    } elseif (isset($_POST['update_status'])) {
         $todo->updateTodoStatus($_POST['todo_id'], $_SESSION['user_id'], $_POST['status']);
-    } elseif (isset($_POST['delete_todo']) && $auth->isLoggedIn()) {
+    } elseif (isset($_POST['delete_todo'])) {
         $todo->deleteTodo($_POST['todo_id'], $_SESSION['user_id']);
     }
 }
 
-// Get todos if user is logged in
-$todos = $auth->isLoggedIn() ? $todo->getTodos($_SESSION['user_id']) : [];
+// Get todos
+$todos = $todo->getTodos($_SESSION['user_id']);
+
+// Get single todo for editing
+$edit_todo = null;
+if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
+    $edit_todo = $todo->getTodo($_GET['edit'], $_SESSION['user_id']);
+}
 ?>
 
 <!DOCTYPE html>
@@ -47,19 +53,31 @@ $todos = $auth->isLoggedIn() ? $todo->getTodos($_SESSION['user_id']) : [];
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Todo App with Auth</title>
+    <title>Todo App</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .todo-item {
+            border-left: 5px solid #dc3545;
+        }
+        .todo-item.completed {
+            border-left-color: #198754;
+            background-color: #f8f9fa;
+        }
+        .todo-item.completed .todo-title {
+            text-decoration: line-through;
+            color: #6c757d;
+        }
+    </style>
 </head>
-<body>
+<body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand" href="#">Todo App</a>
-            <?php if ($auth->isLoggedIn()): ?>
-                <form method="post" class="ms-auto">
-                    <span class="navbar-text me-3">Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?></span>
-                    <button type="submit" name="logout" class="btn btn-outline-light">Logout</button>
-                </form>
-            <?php endif; ?>
+            <form method="post" class="ms-auto">
+                <span class="navbar-text me-3">Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?></span>
+                <button type="submit" name="logout" class="btn btn-outline-light">Logout</button>
+            </form>
         </div>
     </nav>
 
@@ -71,96 +89,91 @@ $todos = $auth->isLoggedIn() ? $todo->getTodos($_SESSION['user_id']) : [];
             <div class="alert alert-success"><?php echo $success; ?></div>
         <?php endif; ?>
 
-        <?php if (!$auth->isLoggedIn()): ?>
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header">Login</div>
-                        <div class="card-body">
-                            <form method="post">
-                                <div class="mb-3">
-                                    <label class="form-label">Username</label>
-                                    <input type="text" name="username" class="form-control" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Password</label>
-                                    <input type="password" name="password" class="form-control" required>
-                                </div>
-                                <button type="submit" name="login" class="btn btn-primary">Login</button>
-                            </form>
-                        </div>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><?php echo $edit_todo ? 'Edit Todo' : 'Add New Todo'; ?></h5>
                     </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header">Register</div>
-                        <div class="card-body">
-                            <form method="post">
-                                <div class="mb-3">
-                                    <label class="form-label">Username</label>
-                                    <input type="text" name="username" class="form-control" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Password</label>
-                                    <input type="password" name="password" class="form-control" required>
-                                </div>
-                                <button type="submit" name="register" class="btn btn-success">Register</button>
-                            </form>
-                        </div>
+                    <div class="card-body">
+                        <form method="post">
+                            <?php if ($edit_todo): ?>
+                                <input type="hidden" name="todo_id" value="<?php echo $edit_todo['id']; ?>">
+                            <?php endif; ?>
+                            <div class="mb-3">
+                                <label class="form-label">Title</label>
+                                <input type="text" name="title" class="form-control" required 
+                                       value="<?php echo $edit_todo ? htmlspecialchars($edit_todo['title']) : ''; ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Description</label>
+                                <textarea name="description" class="form-control" rows="3" required><?php 
+                                    echo $edit_todo ? htmlspecialchars($edit_todo['description']) : ''; 
+                                ?></textarea>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button type="submit" name="<?php echo $edit_todo ? 'update_todo' : 'add_todo'; ?>" 
+                                        class="btn btn-primary">
+                                    <?php echo $edit_todo ? 'Update Todo' : 'Add Todo'; ?>
+                                </button>
+                                <?php if ($edit_todo): ?>
+                                    <a href="index.php" class="btn btn-secondary">Cancel Edit</a>
+                                <?php endif; ?>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
-        <?php else: ?>
-            <div class="row">
-                <div class="col-md-4">
-                    <div class="card">
-                        <div class="card-header">Add New Todo</div>
-                        <div class="card-body">
-                            <form method="post">
-                                <div class="mb-3">
-                                    <label class="form-label">Title</label>
-                                    <input type="text" name="title" class="form-control" required>
+            <div class="col-md-8">
+                <h3>Your Todos</h3>
+                <?php if (empty($todos)): ?>
+                    <div class="alert alert-info">No todos yet. Add your first todo!</div>
+                <?php else: ?>
+                    <?php foreach ($todos as $todo_item): ?>
+                        <div class="card mb-3 shadow-sm todo-item <?php echo $todo_item['status'] === 'completed' ? 'completed' : ''; ?>">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h5 class="card-title todo-title mb-0">
+                                        <?php echo htmlspecialchars($todo_item['title']); ?>
+                                    </h5>
+                                    <span class="badge <?php echo $todo_item['status'] === 'completed' ? 'bg-success' : 'bg-danger'; ?>">
+                                        <?php echo ucfirst($todo_item['status']); ?>
+                                    </span>
                                 </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Description</label>
-                                    <textarea name="description" class="form-control" rows="3" required></textarea>
-                                </div>
-                                <button type="submit" name="add_todo" class="btn btn-primary">Add Todo</button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-8">
-                    <h3>Your Todos</h3>
-                    <?php if (empty($todos)): ?>
-                        <p class="text-muted">No todos yet. Add your first todo!</p>
-                    <?php else: ?>
-                        <?php foreach ($todos as $todo_item): ?>
-                            <div class="card mb-3">
-                                <div class="card-body">
-                                    <h5 class="card-title"><?php echo htmlspecialchars($todo_item['title']); ?></h5>
-                                    <p class="card-text"><?php echo htmlspecialchars($todo_item['description']); ?></p>
-                                    <div class="d-flex justify-content-between align-items-center">
+                                <p class="card-text"><?php echo htmlspecialchars($todo_item['description']); ?></p>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <a href="index.php?edit=<?php echo $todo_item['id']; ?>" 
+                                           class="btn btn-sm btn-primary me-2">
+                                            <i class="bi bi-pencil"></i> Edit
+                                        </a>
                                         <form method="post" class="d-inline">
                                             <input type="hidden" name="todo_id" value="<?php echo $todo_item['id']; ?>">
-                                            <select name="status" class="form-select d-inline-block w-auto me-2" onchange="this.form.submit()">
-                                                <option value="pending" <?php echo $todo_item['status'] === 'pending' ? 'selected' : ''; ?>>Pending</option>
-                                                <option value="completed" <?php echo $todo_item['status'] === 'completed' ? 'selected' : ''; ?>>Completed</option>
-                                            </select>
-                                            <input type="hidden" name="update_status" value="1">
-                                        </form>
-                                        <form method="post" class="d-inline">
-                                            <input type="hidden" name="todo_id" value="<?php echo $todo_item['id']; ?>">
-                                            <button type="submit" name="delete_todo" class="btn btn-danger btn-sm">Delete</button>
+                                            <button type="submit" name="delete_todo" class="btn btn-danger btn-sm">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
                                         </form>
                                     </div>
+                                    <form method="post" class="d-inline">
+                                        <input type="hidden" name="todo_id" value="<?php echo $todo_item['id']; ?>">
+                                        <select name="status" class="form-select form-select-sm d-inline-block w-auto" 
+                                                onchange="this.form.submit()">
+                                            <option value="pending" <?php echo $todo_item['status'] === 'pending' ? 'selected' : ''; ?>>
+                                                Pending
+                                            </option>
+                                            <option value="completed" <?php echo $todo_item['status'] === 'completed' ? 'selected' : ''; ?>>
+                                                Completed
+                                            </option>
+                                        </select>
+                                        <input type="hidden" name="update_status" value="1">
+                                    </form>
                                 </div>
                             </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </div>
-        <?php endif; ?>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
